@@ -119,43 +119,43 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  # Publish packages and create git tags if needed
-  publish-and-tag:
-    runs-on: ubuntu-latest
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
-
-    if: ${{ !startsWith(github.ref, 'refs/tags/') }}
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          # Set Git operations with the bot PAT since we have tag protection rule
-          token: ${{ secrets.BOT_PAT }}
-          fetch-depth: 0
-
-      - name: Setup Node and pnpm
-        uses: silverhand-io/actions-node-pnpm-run-steps@v5
-        with:
-          pnpm-version: 10
-          node-version: ^22.14.0
-
-      - name: Import GPG key
-        uses: crazy-max/ghaction-import-gpg@v6
-        with:
-          gpg_private_key: ${{ secrets.BOT_GPG_KEY }}
-          passphrase: ${{ secrets.BOT_GPG_PASSPHRASE }}
-          git_user_signingkey: true
-          git_commit_gpgsign: true
-          git_tag_gpgsign: true
-
-      - name: Configure Git user
-        run: |
-          git config --global user.email bot@silverhand.io
-          git config --global user.name silverhand-bot
-
-      - name: Publish
-        run: node .scripts/publish.js
+  # [UNLOCKED] publish-and-tag disabled — we do not publish to npm.
+  # Requires NPM_AUTOMATION_TOKEN, BOT_PAT, BOT_GPG_KEY, BOT_GPG_PASSPHRASE.
+  # publish-and-tag:
+  #   runs-on: ubuntu-latest
+  #   env:
+  #     NODE_AUTH_TOKEN: ${{ secrets.NPM_AUTOMATION_TOKEN }}
+  #
+  #   if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  #
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         token: ${{ secrets.BOT_PAT }}
+  #         fetch-depth: 0
+  #
+  #     - name: Setup Node and pnpm
+  #       uses: silverhand-io/actions-node-pnpm-run-steps@v5
+  #       with:
+  #         pnpm-version: 10
+  #         node-version: ^22.14.0
+  #
+  #     - name: Import GPG key
+  #       uses: crazy-max/ghaction-import-gpg@v6
+  #       with:
+  #         gpg_private_key: ${{ secrets.BOT_GPG_KEY }}
+  #         passphrase: ${{ secrets.BOT_GPG_PASSPHRASE }}
+  #         git_user_signingkey: true
+  #         git_commit_gpgsign: true
+  #         git_tag_gpgsign: true
+  #
+  #     - name: Configure Git user
+  #       run: |
+  #         git config --global user.email bot@silverhand.io
+  #         git config --global user.name silverhand-bot
+  #
+  #     - name: Publish
+  #       run: node .scripts/publish.js
 
   create-github-release:
     environment: release
@@ -182,7 +182,9 @@ jobs:
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          token: ${{ secrets.BOT_PAT }}
+          # [UNLOCKED] BOT_PAT replaced with GITHUB_TOKEN (no external secret needed)
+          # token: ${{ secrets.BOT_PAT }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           body: ""
           files: /tmp/logto.tar.gz
           append_body: true
