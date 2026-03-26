@@ -2,22 +2,31 @@ import { readFile } from 'node:fs/promises';
 
 import { uploadFileGuard, maxUploadFileSize, adminTenantId } from '@logto/schemas';
 import { generateStandardId } from '@logto/shared';
+import AdmZip from 'adm-zip';
+import pMap from 'p-map';
 import pRetry, { AbortError } from 'p-retry';
 import { object, z } from 'zod';
 
 import RequestError from '#src/errors/RequestError/index.js';
 import koaGuard from '#src/middleware/koa-guard.js';
-import { koaQuotaGuard } from '#src/middleware/koa-quota-guard.js';
+// [UNLOCKED] Quota guard import kept for reference
+// import { koaQuotaGuard } from '#src/middleware/koa-quota-guard.js';
 import SystemContext from '#src/tenants/SystemContext.js';
 import assertThat from '#src/utils/assert-that.js';
 import { getConsoleLogFromContext } from '#src/utils/console.js';
 import { streamToString } from '#src/utils/file.js';
 import { buildAzureStorage } from '#src/utils/storage/azure-storage.js';
+import {
+  buildExperienceStorage,
+  getContentType,
+} from '#src/utils/storage/experience-storage.js';
 import { getTenantId } from '#src/utils/tenant.js';
 
 import { type ManagementApiRouter, type RouterInitArgs } from '../../types.js';
 
 const maxRetryCount = 5;
+/** Concurrency limit for parallel S3 uploads of extracted ZIP entries */
+const s3UploadConcurrency = 10;
 
 export default function customUiAssetsRoutes<T extends ManagementApiRouter>(
   ...[
@@ -29,7 +38,8 @@ export default function customUiAssetsRoutes<T extends ManagementApiRouter>(
 ) {
   router.post(
     '/sign-in-exp/default/custom-ui-assets',
-    koaQuotaGuard({ key: 'bringYourUiEnabled', quota }),
+    // [UNLOCKED] Quota guard disabled — bringYourUi available in all environments.
+    // Original: koaQuotaGuard({ key: 'bringYourUiEnabled', quota }),
     koaGuard({
       files: object({
         file: uploadFileGuard.array().min(1).max(1),
@@ -51,52 +61,76 @@ export default function customUiAssetsRoutes<T extends ManagementApiRouter>(
       assertThat(tenantId, 'guard.can_not_get_tenant_id');
       assertThat(tenantId !== adminTenantId, 'guard.not_allowed_for_admin_tenant');
 
-      const { experienceZipsProviderConfig } = SystemContext.shared;
-      assertThat(
-        experienceZipsProviderConfig?.provider === 'AzureStorage',
-        'storage.not_configured'
-      );
-      const { connectionString, container } = experienceZipsProviderConfig;
-
-      const { uploadFile, downloadFile, isFileExisted } = buildAzureStorage(
-        connectionString,
-        container
-      );
+      // [EXTENDED] Support both Azure and S3 storage providers.
+      // Fallback: use storageProviderConfig if experienceZipsProviderConfig is not set.
+      const { experienceZipsProviderConfig, experienceBlobsProviderConfig, storageProviderConfig } =
+        SystemContext.shared;
 
       const customUiAssetId = generateStandardId(8);
-      const objectKey = `${tenantId}/${customUiAssetId}/assets.zip`;
-      const errorLogObjectKey = `${tenantId}/${customUiAssetId}/error.log`;
 
       try {
-        // Upload the zip file to `experience-zips` container, in which a blob trigger is configured,
-        // and an azure function will be executed automatically to unzip the file on blob received.
-        // If the unzipping process succeeds, the zip file will be removed and assets will be stored in
-        // `experience-blobs` container. If it fails, the error message will be written to `error.log` file.
-        await uploadFile(await readFile(file.filepath), objectKey, {
-          contentType: file.mimetype,
-        });
+        // --- Azure flow: original blob trigger + polling mechanism ---
+        if (experienceZipsProviderConfig?.provider === 'AzureStorage') {
+          const { connectionString, container } = experienceZipsProviderConfig;
+          const { uploadFile, downloadFile, isFileExisted } = buildAzureStorage(
+            connectionString,
+            container
+          );
 
-        const hasUnzipCompleted = async (retryTimes: number) => {
-          if (retryTimes > maxRetryCount) {
-            throw new AbortError('Unzip timeout. Max retry count reached.');
-          }
-          const [hasZip, hasError] = await Promise.all([
-            isFileExisted(objectKey),
-            isFileExisted(errorLogObjectKey),
-          ]);
-          if (hasZip) {
-            throw new Error('Unzip in progress...');
-          }
-          if (hasError) {
-            const errorLogBlob = await downloadFile(errorLogObjectKey);
-            const errorLog = await streamToString(errorLogBlob.readableStreamBody);
-            throw new AbortError(errorLog || 'Unzipping failed.');
-          }
-        };
+          const objectKey = `${tenantId}/${customUiAssetId}/assets.zip`;
+          const errorLogObjectKey = `${tenantId}/${customUiAssetId}/error.log`;
 
-        await pRetry(hasUnzipCompleted, {
-          retries: maxRetryCount,
-        });
+          // Upload the zip file to `experience-zips` container, in which a blob trigger is configured,
+          // and an azure function will be executed automatically to unzip the file on blob received.
+          // If the unzipping process succeeds, the zip file will be removed and assets will be stored in
+          // `experience-blobs` container. If it fails, the error message will be written to `error.log` file.
+          await uploadFile(await readFile(file.filepath), objectKey, {
+            contentType: file.mimetype,
+          });
+
+          const hasUnzipCompleted = async (retryTimes: number) => {
+            if (retryTimes > maxRetryCount) {
+              throw new AbortError('Unzip timeout. Max retry count reached.');
+            }
+            const [hasZip, hasError] = await Promise.all([
+              isFileExisted(objectKey),
+              isFileExisted(errorLogObjectKey),
+            ]);
+            if (hasZip) {
+              throw new Error('Unzip in progress...');
+            }
+            if (hasError) {
+              const errorLogBlob = await downloadFile(errorLogObjectKey);
+              const errorLog = await streamToString(errorLogBlob.readableStreamBody);
+              throw new AbortError(errorLog || 'Unzipping failed.');
+            }
+          };
+
+          await pRetry(hasUnzipCompleted, {
+            retries: maxRetryCount,
+          });
+        } else {
+          // --- S3 / generic flow: local unzip + parallel upload ---
+          // Use experienceBlobsProvider if configured, otherwise fall back to storageProvider.
+          const blobsConfig =
+            experienceBlobsProviderConfig ?? experienceZipsProviderConfig ?? storageProviderConfig;
+          assertThat(blobsConfig, 'storage.not_configured');
+
+          const storage = buildExperienceStorage(blobsConfig);
+          const zipBuffer = await readFile(file.filepath);
+          const zip = new AdmZip(zipBuffer);
+          const entries = zip.getEntries().filter((entry) => !entry.isDirectory);
+
+          await pMap(
+            entries,
+            async (entry) => {
+              const entryKey = `experience/${tenantId}/${customUiAssetId}/${entry.entryName}`;
+              const contentType = getContentType(entry.entryName);
+              await storage.uploadFile(entry.getData(), entryKey, { contentType });
+            },
+            { concurrency: s3UploadConcurrency }
+          );
+        }
       } catch (error: unknown) {
         getConsoleLogFromContext(ctx).error(error);
         throw new RequestError(
