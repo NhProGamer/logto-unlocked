@@ -4,7 +4,9 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    image: svhd/logto:${TAG-latest}
+    # [UNLOCKED] Image switched from DockerHub (svhd/logto) to GHCR
+    # image: svhd/logto:${TAG-latest}
+    image: ghcr.io/nhprogamer/logto-unlocked:${TAG-latest}
     entrypoint: ["sh", "-c", "npm run cli db seed -- --swe && npm start"]
     ports:
       - 3001:3001
