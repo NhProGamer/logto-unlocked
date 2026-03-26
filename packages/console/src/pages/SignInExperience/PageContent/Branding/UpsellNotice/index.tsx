@@ -15,24 +15,25 @@ function UpsellNotice() {
   const { currentSubscriptionQuota } = useContext(SubscriptionDataContext);
   const isBringYourUiEnabled = currentSubscriptionQuota.bringYourUiEnabled;
 
-  if (!isCloud || isBringYourUiEnabled) {
-    return null;
-  }
+  // [UNLOCKED] Upsell notice disabled — branding features available in all environments.
+  // Original condition: if (!isCloud || isBringYourUiEnabled) { return null; }
+  return null;
 
-  return (
-    <div className={classNames(styles.inlineNotification, styles.info, styles.plain)}>
-      <div className={styles.content}>{t('upsell.paywall.branding_customization')}</div>
-      <div className={styles.action}>
-        <TextLink
-          onClick={() => {
-            navigate('/tenant-settings/subscription');
-          }}
-        >
-          {t('upsell.view_plans')}
-        </TextLink>
-      </div>
-    </div>
-  );
+  // Original upsell UI (kept for reference):
+  // return (
+  //   <div className={classNames(styles.inlineNotification, styles.info, styles.plain)}>
+  //     <div className={styles.content}>{t('upsell.paywall.branding_customization')}</div>
+  //     <div className={styles.action}>
+  //       <TextLink
+  //         onClick={() => {
+  //           navigate('/tenant-settings/subscription');
+  //         }}
+  //       >
+  //         {t('upsell.view_plans')}
+  //       </TextLink>
+  //     </div>
+  //   </div>
+  // );
 }
 
 export default UpsellNotice;

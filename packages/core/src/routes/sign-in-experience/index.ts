@@ -248,18 +248,18 @@ export default function signInExperiencesRoutes<T extends ManagementApiRouter>(
         );
       }
 
-      // Guard the quota for BYUI if the hideLogtoBranding is set to true
-      if (hideLogtoBranding) {
-        // Hide Logto branding is only available for Logto Cloud
-        assertThat(
-          EnvSet.values.isCloud,
-          new RequestError({
-            code: 'request.invalid_input',
-            details: 'Hide Logto branding is not supported in this environment',
-          })
-        );
-        await quota.guardTenantUsageByKey('bringYourUiEnabled');
-      }
+      // [UNLOCKED] Hide Logto branding is now available in all environments.
+      // Previously restricted to Logto Cloud only:
+      // if (hideLogtoBranding) {
+      //   assertThat(
+      //     EnvSet.values.isCloud,
+      //     new RequestError({
+      //       code: 'request.invalid_input',
+      //       details: 'Hide Logto branding is not supported in this environment',
+      //     })
+      //   );
+      //   await quota.guardTenantUsageByKey('bringYourUiEnabled');
+      // }
       if (passkeySignIn?.enabled) {
         await quota.guardTenantUsageByKey('passkeySignInEnabled');
       }

@@ -118,21 +118,14 @@ function BrandingForm() {
           />
         </>
       )}
-      {isCloud && (
-        <FormField
-          title="sign_in_exp.branding.hide_logto_branding"
-          featureTag={{
-            isVisible: !isHideLogtoBrandingEnabled,
-            plan: latestProPlanId,
-          }}
-        >
-          <Switch
-            label={t('sign_in_exp.branding.hide_logto_branding_description')}
-            {...register('hideLogtoBranding')}
-            disabled={!isHideLogtoBrandingEnabled}
-          />
-        </FormField>
-      )}
+      {/* [UNLOCKED] Hide Logto branding is now available in all environments. */}
+      {/* Previously gated by: {isCloud && ( ... featureTag / disabled ... )} */}
+      <FormField title="sign_in_exp.branding.hide_logto_branding">
+        <Switch
+          label={t('sign_in_exp.branding.hide_logto_branding_description')}
+          {...register('hideLogtoBranding')}
+        />
+      </FormField>
     </Card>
   );
 }
