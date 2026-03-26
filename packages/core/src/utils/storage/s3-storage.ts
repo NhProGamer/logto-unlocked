@@ -1,4 +1,11 @@
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  DeleteObjectCommand,
+} from '@aws-sdk/client-s3';
+import { type Readable } from 'node:stream';
 
 import type { UploadFile } from './types.js';
 
@@ -86,5 +93,84 @@ export const buildS3Storage = ({
     };
   };
 
-  return { uploadFile };
+  // [EXTENDED] Download a file from S3 with optional byte range support.
+  // Returns an interface compatible with Azure's BlobDownloadResponseParsed
+  // so that callers (e.g. koa-serve-custom-ui-assets) can use the same code path.
+  const downloadFile = async (
+    objectKey: string,
+    offset?: number,
+    count?: number
+  ): Promise<{
+    readableStreamBody?: NodeJS.ReadableStream;
+    contentLength?: number;
+    contentType?: string;
+  }> => {
+    const rangeHeader =
+      offset !== undefined || count !== undefined
+        ? `bytes=${offset ?? 0}-${count !== undefined && offset !== undefined ? offset + count - 1 : ''}`
+        : undefined;
+
+    const command = new GetObjectCommand({
+      Bucket: bucket,
+      Key: objectKey,
+      Range: rangeHeader,
+    });
+
+    const response = await client.send(command);
+
+    return {
+      readableStreamBody: response.Body as Readable | undefined,
+      contentLength: response.ContentLength,
+      contentType: response.ContentType,
+    };
+  };
+
+  // [EXTENDED] Check if a file exists in S3.
+  const isFileExisted = async (objectKey: string): Promise<boolean> => {
+    try {
+      const command = new HeadObjectCommand({
+        Bucket: bucket,
+        Key: objectKey,
+      });
+      await client.send(command);
+      return true;
+    } catch (error: unknown) {
+      // S3 returns a 404 NotFound error when the object does not exist.
+      // The error name/code varies by SDK version, so we check broadly.
+      if (
+        error instanceof Error &&
+        ('name' in error && (error.name === 'NotFound' || error.name === '404')) ||
+        (error as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode === 404
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  };
+
+  // [EXTENDED] Get file properties (content length) from S3.
+  // Returns an interface compatible with Azure's BlobGetPropertiesResponse.
+  const getFileProperties = async (
+    objectKey: string
+  ): Promise<{ contentLength?: number }> => {
+    const command = new HeadObjectCommand({
+      Bucket: bucket,
+      Key: objectKey,
+    });
+    const response = await client.send(command);
+    return {
+      contentLength: response.ContentLength,
+    };
+  };
+
+  // [EXTENDED] Delete a file from S3.
+  const deleteFile = async (objectKey: string): Promise<void> => {
+    const command = new DeleteObjectCommand({
+      Bucket: bucket,
+      Key: objectKey,
+    });
+    await client.send(command);
+  };
+
+  return { uploadFile, downloadFile, isFileExisted, getFileProperties, deleteFile };
 };
